@@ -3,6 +3,10 @@ import { API_CONTRACT_TOOL_CONTRACTS } from "./apiContractToolContracts.js";
 import { NTFS_JOURNAL_TOOL_CONTRACTS } from "./ntfsJournalToolContracts.js";
 import { applicationInventoryProjectionInputSchema } from "../domain/mobileApplicationGraphProjection.js";
 import { z } from "zod";
+import {
+  legacyJourneyWorkflowInputSchema,
+  legacyJourneyWorkflowResultSchema,
+} from "../domain/legacyJourneyProject.js";
 import { EVIDENCE_FORMAT_REVISION } from "../domain/evidenceFormat.js";
 import {
   featureTraceSummaryViewResultSchema,
@@ -100,6 +104,47 @@ const retained = (evidence_id: string) => ({
 
 /** Provider-neutral graph workflow contracts shared by MCP and CLI adapters. */
 export const APPLICATION_TOOL_CONTRACTS = [
+  {
+    name: "characterize_legacy_application_journey",
+    cli: true,
+    ...toolContractMetadata(
+      "characterize_legacy_application_journey",
+      toolEffects({
+        mutatesSession: true,
+        writesFilesystem: true,
+        idempotent: false,
+      }),
+    ),
+    description:
+      "Characterize a legacy Electron journey from a local source tree or historical inventory and a build, or from prepared Evidence. Returns scoped diagnostics and migration obligations. Supply an export directory to publish a portable dossier.",
+    kind: "application",
+    inputSchema: legacyJourneyWorkflowInputSchema,
+    outputSchema: evidenceResultOf(legacyJourneyWorkflowResultSchema),
+    examples: [
+      {
+        title:
+          "Characterize a settings journey with a portable source inventory",
+        input: {
+          local_inputs: {
+            source: {
+              kind: "inventory-file",
+              path: "/analysis/legacy-source.json",
+            },
+            build: { input_path: "/analysis/legacy/app.asar", format: "asar" },
+          },
+          view: {
+            kind: "legacy-journey",
+            journey_id: "settings-layout",
+            observations: [],
+            paths: [],
+          },
+          feature_seeds: [
+            { kind: "channel", value: "prefs:set-layout", match: "exact" },
+          ],
+        },
+      },
+    ],
+  },
   ...API_CONTRACT_TOOL_CONTRACTS,
   ...NTFS_JOURNAL_TOOL_CONTRACTS,
   ...PLAYWRIGHT_TRACE_TOOL_CONTRACTS,

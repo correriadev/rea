@@ -12,9 +12,12 @@ import { parseProcessCaptureEvidence } from "./process/ProcessEvidence.js";
 import { evidenceSupportsOriginalAuthority } from "./ReconstructionObligationAuthority.js";
 import {
   applicationObligationPolicy,
+  LEGACY_PERSISTENCE_CASES,
   semanticObligationPolicy,
   type ReconstructionObligationCandidatePolicy,
 } from "./ReconstructionObligationPolicies.js";
+import { analysisViewResultSchema } from "../domain/analysisView/analysisViewResult.js";
+import { evidenceFileTarget } from "../domain/evidence.js";
 import type { ResolvedReconstructionObligationRequest } from "./ReconstructionObligationLedgerRequest.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 
@@ -47,6 +50,7 @@ export const deriveReconstructionObligationCandidates = (
   for (const evidence of bundle.records) {
     deriveApplicationCandidates(evidence, records, candidates, limitations);
     deriveProcessCandidate(evidence, candidates, limitations);
+    deriveLegacyPersistenceCandidates(evidence, records, candidates);
   }
   for (const obligation of request.reviewedObligations)
     addCandidate(candidates, reviewedCandidate(obligation, records));
@@ -56,6 +60,69 @@ export const deriveReconstructionObligationCandidates = (
     ),
     limitations: [...limitations].sort(),
   };
+};
+
+const deriveLegacyPersistenceCandidates = (
+  evidence: Evidence,
+  records: ReadonlyMap<string, Evidence>,
+  candidates: Map<string, ReconstructionObligationCandidate>,
+): void => {
+  if (
+    evidence.operation !== "inspect_analysis_view" ||
+    evidence.predicate_type !== "rea.analysis-view" ||
+    (evidence.normalized_result as { kind?: unknown } | null)?.kind !==
+      "legacy-journey"
+  )
+    return;
+  const parsed = analysisViewResultSchema.safeParse(evidence.normalized_result);
+  if (!parsed.success || parsed.data.kind !== "legacy-journey") return;
+  const view = parsed.data;
+  if (view.verification !== undefined) return;
+  const parent = records.get(view.parent_evidence_id);
+  if (
+    !parent ||
+    parent.operation !== view.parent_operation ||
+    evidenceFileTarget(parent)?.sha256 !== view.build_sha256 ||
+    !evidence.evidence_links.includes(parent.evidence_id)
+  )
+    return;
+
+  for (const scenario of LEGACY_PERSISTENCE_CASES) {
+    const identity = digestCanonicalValue(
+      [view.journey_id, view.build_sha256, scenario.family],
+      "Legacy persistence obligation",
+    );
+    const candidate = generatedCandidate({
+      key: `legacy-persistence:${identity}`,
+      title: `${view.journey_id}: ${scenario.title}`,
+      policy: {
+        family: scenario.family,
+        applicationLayer: "persistence",
+        cases: ["positive"],
+        originalAuthority: "runtime",
+        fixtureAuthority: "packaged-process",
+        verifierAuthority: "packaged-process",
+        requiresParserType: false,
+      },
+      artifactSha256: view.build_sha256,
+      applicationNodeId: null,
+      semanticNodeId: null,
+      location: `/journeys/${identity}`,
+      authorityReferences: [
+        {
+          evidence_id: evidence.evidence_id,
+          authority: evidence.authority,
+          state: "candidate",
+          location: "/normalized_result",
+        },
+      ],
+    });
+    // A journey projection is not original behavioral proof.
+    addCandidate(candidates, {
+      ...candidate,
+      required_next_evidence: [scenario.nextEvidence],
+    });
+  }
 };
 
 const deriveApplicationCandidates = (

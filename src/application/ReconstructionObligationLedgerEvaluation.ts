@@ -211,7 +211,12 @@ const evaluateObligation = (
   if (binding !== null)
     evaluateBinding(candidate, binding, context, diagnostics);
   diagnostics.push(
-    ...originalCaseDiagnostics(candidate, originalCases, context.evidence),
+    ...originalCaseDiagnostics(
+      candidate,
+      originalCases,
+      context.evidence,
+      binding,
+    ),
   );
   evaluateAuthority(candidate, originalCases, context, diagnostics);
   evaluateDisposition(candidate, diagnostics);

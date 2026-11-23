@@ -218,6 +218,8 @@ import {
 } from "./javascriptFactsView.js";
 import { javaScriptSourceSelectionSchema } from "../javascript/javascriptSourceSelection.js";
 import { digestSchema, prefixedDigestSchema } from "../digests.js";
+import { applicationFeatureTraceResultSchema } from "../javascript/javascriptFeatureTraceSchemas.js";
+import { legacyJourneyCleanupSchema } from "../legacyJourney.js";
 import { jsonObjectSchema, jsonValueSchema } from "../jsonValue.js";
 import { binaryLayoutSchema } from "../native/binaryLayout.js";
 import { bundleResourceRootSchema } from "../apple/bundleResourceRoot.js";
@@ -1313,6 +1315,46 @@ const machoPageViewResultSchema = z
 
 /** Projected facts for one selected view of retained analysis Evidence. */
 export const analysisViewResultSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    ...viewResultBase,
+    kind: z.literal("legacy-journey"),
+    parent_operation: z.literal("analyze_javascript_application"),
+    journey_id: z.string().min(1).max(256),
+    build_sha256: digestSchema,
+    verification: z
+      .strictObject({
+        evidence_id: prefixedDigestSchema("ev"),
+        base_view_evidence_id: prefixedDigestSchema("ev"),
+        candidate_sha256: digestSchema,
+        cleanup: legacyJourneyCleanupSchema,
+        cases: z.array(jsonObjectSchema),
+        phases: z.array(jsonObjectSchema),
+      })
+      .optional(),
+    static_traces: z
+      .array(
+        z.strictObject({
+          evidence_id: prefixedDigestSchema("ev"),
+          seed: jsonObjectSchema,
+          direction: z.enum(["outgoing", "incoming", "both"]),
+          coverage:
+            applicationFeatureTraceResultSchema.shape.coverage.shape.status,
+          total_paths: z.int().nonnegative(),
+          paths: z.array(jsonObjectSchema),
+        }),
+      )
+      .optional(),
+    observations: z.array(jsonObjectSchema),
+    paths: z.array(
+      z.strictObject({
+        entry: z.string(),
+        condition: z.string(),
+        steps: z.array(z.string()),
+        status: z.enum(["declared", "unresolved"]),
+      }),
+    ),
+    diagnostics: z.array(z.string()),
+  }),
   z.strictObject({
     ...viewResultBase,
     ...nativeViewSourceContext,

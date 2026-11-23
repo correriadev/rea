@@ -95,6 +95,10 @@ export class CliJavaScriptAnalysisHost {
 /** Process CLI host used when a caller does not pass its own host. */
 const processJavaScriptAnalysis = new CliJavaScriptAnalysisHost();
 
+/** Share the CLI's owned worker and shutdown with composed analysis workflows. */
+export const cliJavaScriptAnalysisScope = (): ArtifactResourceScope =>
+  processJavaScriptAnalysis.scope();
+
 ownCliProcessResource("javascript-analysis", () =>
   processJavaScriptAnalysis.close(),
 );

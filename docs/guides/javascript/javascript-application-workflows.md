@@ -17,6 +17,9 @@ native-analysis provider. Static artifact observations, passive runtime
 observations, relationship inferences, and unknown or unavailable facts retain
 their original graph authority.
 
+The [legacy journey workflow](#legacy-journey-characterization-and-verification)
+can start from local artifacts and export a portable verification project.
+
 `analyze_javascript_application` Evidence retains the structural JavaScript
 Application Graph and a separate semantic relation graph bound to the same root
 artifact digest and structural graph ID. Semantic tracing requires the semantic
@@ -476,6 +479,84 @@ returns all source files, candidate nodes, and matching signals represented in
 the supplied graphs. Partial inventories remain unknown where absence cannot
 be established. These static mappings do not claim runtime loading or semantic
 equivalence.
+
+## Legacy journey characterization and verification
+
+Use `characterize_legacy_application_journey` in MCP or supply a request
+document to `rea characterize-legacy-application-journey request.json --json`.
+The workflow binds an independent historical source identity to a local build,
+retains feature traces for the selected seeds, and derives migration obligations.
+
+```json
+{
+  "local_inputs": {
+    "source": {
+      "kind": "inventory-file",
+      "path": "/analysis/legacy-source.json"
+    },
+    "build": {
+      "input_path": "/analysis/legacy/app.asar",
+      "format": "asar"
+    }
+  },
+  "view": {
+    "kind": "legacy-journey",
+    "journey_id": "settings-layout",
+    "observations": [],
+    "paths": []
+  },
+  "feature_seeds": [
+    { "kind": "channel", "value": "prefs:set-layout", "match": "exact" }
+  ],
+  "export_directory": "/analysis/settings-dossier"
+}
+```
+
+Use `{"kind":"source-tree","root":"/analysis/legacy-source"}` to import a
+source tree on a host that supports safe no-follow file opens. Where that
+capability is unavailable, REA can still analyze the build and reports partial
+coverage with a recovery message. Supply an inventory produced by
+`rea import-reference-source` on a supported host to enable source comparison.
+An empty observation list leaves runtime behavior unknown. Feature paths carry
+the provenance and coverage of the native trace.
+
+Omit `export_directory` for inspection. An explicit export writes a new
+directory containing a manifest, a portable Evidence bundle, the journey
+projection, a migration matrix, an observation plan, a ledger, and an HTML
+report. `verify.mjs` and the generated README define the independent test project
+and the target-specific lifecycle driver it expects.
+
+Run `node verify.mjs config.json result.json` from the exported project with a
+reviewed local driver and the selected builds. The project uses disposable
+profiles and reports clean start, same-build restart, and in-place upgrade as
+separate cases. It writes JSON, JUnit, and HTML. An exit status of 1 means at
+least one case failed or remained unknown. Review the receipt for each result
+and the cleanup outcome.
+
+To evaluate the run from an exported project, set `dossier_manifest_path` to
+its `manifest.json` and add `verification.candidate_sha256` and
+`verification.receipt_path`. The manifest, bundle and restore query supply
+the source identity, build identity and committed view. Pin the
+candidate digest independently of the receipt. Use a new export directory
+to save the updated dossier. REA checks case identity, build and profile
+scope, phase order, and cleanup before the ledger evaluates the proof. The
+driver supplies process and first-read observations. The runner records disk
+witnesses separately and can read a selected JSON field when configured.
+
+In a new MCP session, call `import_evidence_bundle` on the exported
+`evidence.json`, then load the arguments in `journey-query.json` into
+`inspect_analysis_view`. A verified view preserves the requested, returned,
+stored, and reopened fields with their witnesses. An unrecorded input or
+reply remains unknown. A derived observation must keep the same field, value,
+phase, and capture scope as its parents. If a retained witness is unavailable
+during restoration, the dependent observations also become unknown.
+
+An observation source can include `member_path`, an array of exact JSON member
+names. For retained Evidence, the path starts at `normalized_result`. For an
+external state witness, REA verifies its bytes and then reads the member from
+that JSON document. The view labels an exact value match `witness-value-matched`.
+Field role and execution scope still come from the caller. Keep an input
+without a witness unknown, even when the handler reply has a known value.
 
 ## Export return-shape comparison
 

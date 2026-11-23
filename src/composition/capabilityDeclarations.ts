@@ -183,6 +183,7 @@ export const CAPABILITY_DECLARATIONS = {
     providers: [
       providerBinding(JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER, [
         "build_reconstruction_obligation_ledger",
+        "characterize_legacy_application_journey",
         "compare_application_versions",
         "compare_javascript_export_shapes",
         "compare_source_to_bundle",

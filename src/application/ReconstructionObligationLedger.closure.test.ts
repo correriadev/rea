@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { createEvidenceBundle } from "../domain/evidenceBundle.js";
 import { processCaptureSchema } from "../domain/process/processCapture.js";
 import { FINALIZED_PROCESS_CAPTURE_EXAMPLE } from "../domain/process/processCapture.fixture.js";
+import { analysisViewJavaScriptEvidence } from "../../tests/fixtures/analysisView.js";
+import { inspectAnalysisView } from "./analysisView/AnalysisViewService.js";
 
 import {
   build,
@@ -15,6 +17,43 @@ import {
   request,
   reviewedObligation,
 } from "./ReconstructionObligationLedger.fixture.js";
+
+it("derives independent persistence obligations without promoting the view to original proof", async () => {
+  const parent = analysisViewJavaScriptEvidence();
+  const view = await inspectAnalysisView(
+    {
+      source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
+      view: {
+        kind: "legacy-journey",
+        journey_id: "settings",
+        observations: [],
+        paths: [],
+      },
+    },
+    (id) => (id === parent.evidence_id ? parent : undefined),
+  );
+  if (!view.ok) throw view.error;
+  const ledger = build(request([parent, view.value]));
+  const journey = ledger.obligations.filter((item) =>
+    item.family.startsWith("legacy-"),
+  );
+  expect(journey.map((item) => item.family).sort()).toEqual([
+    "legacy-clean-start",
+    "legacy-in-place-upgrade",
+    "legacy-same-build-restart",
+  ]);
+  expect(new Set(journey.map((item) => item.obligation_id)).size).toBe(3);
+  for (const item of journey) {
+    expect(item.status).not.toBe("verified");
+    expect(item.observed_cases).toEqual([]);
+    expect(item.authority_references).toEqual([
+      expect.objectContaining({
+        evidence_id: view.value.evidence_id,
+        state: "candidate",
+      }),
+    ]);
+  }
+});
 import { evaluateReconstructionObligationLedger } from "./ReconstructionObligationLedgerEvaluation.js";
 
 describe("reconstruction obligation ledger", () => {

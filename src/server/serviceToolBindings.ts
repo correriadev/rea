@@ -15,7 +15,10 @@ import {
   listElectronTargets,
 } from "../application/javascript/ElectronObservationService.js";
 import { captureElectronScenario } from "../application/javascript/ElectronActiveObservationService.js";
-import { analyzeJavaScriptApplicationValidated } from "../application/javascript/JavaScriptApplicationService.js";
+import {
+  analyzeJavaScriptApplicationValidated,
+  type JavaScriptApplicationOptions,
+} from "../application/javascript/JavaScriptApplicationService.js";
 import { reconcileJavaScriptRuntimeEvidence } from "../application/javascript/JavaScriptRuntimeReconciliationService.js";
 import { javascriptSourceAnalysis } from "../composition/javascriptSourceAnalysis.js";
 import { analysisSettingsConstraints } from "./analysisSettingsConstraints.js";
@@ -413,6 +416,8 @@ type DesktopBuildTool =
 /** The artifact resource scope application workflows read caller-named files under. */
 export interface ApplicationWorkflowToolOptions {
   readonly resources: ArtifactResourceScope;
+  readonly environment?: JavaScriptApplicationOptions["environment"];
+  readonly settings?: JavaScriptApplicationOptions["settings"];
 }
 
 /** A requested view, or the summary view a `detail: "summary"` request selects. */
@@ -1065,7 +1070,10 @@ const SERVICE_TOOL_BINDINGS = {
   // Application workflows complete Evidence from session-held Evidence or
   // caller-named files under analysis admission; a requested view or summary
   // is staged against it.
-  applicationWorkflows: (({ resources }, { evidenceById }) => {
+  applicationWorkflows: ((
+    { resources, environment, settings },
+    { evidenceById },
+  ) => {
     const playwright = new PlaywrightTraceService(
       new PlaywrightTraceDecoder(resources),
     );
@@ -1143,6 +1151,24 @@ const SERVICE_TOOL_BINDINGS = {
         admission: "application",
         workflow: async (input) =>
           reconstructionObligationLedgerExecution(input),
+      },
+      characterize_legacy_application_journey: {
+        admission: "application",
+        workflow: async (input, { signal }) => {
+          const { characterizeLegacyApplicationJourney } =
+            await import("../application/legacyJourneyWorkflow.js");
+          return settledResult(
+            await characterizeLegacyApplicationJourney(input, {
+              resources,
+              signal,
+              analysis: {
+                sourceAnalysis: javascriptSourceAnalysis,
+                ...(environment === undefined ? {} : { environment }),
+                ...(settings === undefined ? {} : { settings }),
+              },
+            }),
+          );
+        },
       },
       project_android_application_graph: {
         admission: "sdk",

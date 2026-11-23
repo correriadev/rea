@@ -46,6 +46,8 @@ import {
   isImmutableJsonSnapshot,
 } from "../../domain/immutableJson.js";
 import { err, ok, type Result } from "../../domain/result.js";
+import { projectLegacyJourneyView } from "./legacyJourneyView.js";
+import { digestCanonicalValue } from "../../domain/canonicalDigest.js";
 import {
   readEvidenceFileSource,
   type EvidenceFileReadOptions,
@@ -215,6 +217,24 @@ export const inspectAnalysisViewValidated = (
   }
   const resolved = resolveAnalysisViewSource(input.source, lookup);
   if (!resolved.ok) return resolved;
+  if (input.view.kind === "legacy-journey") {
+    const parent = resolved.value;
+    const journey = projectLegacyJourneyView(
+      parent,
+      viewArtifact(parent),
+      input.view,
+      lookup,
+    );
+    if (!journey.ok) return journey;
+    return ok(
+      createAnalysisViewEvidence(
+        input,
+        parent,
+        journey.value.result,
+        journey.value.links,
+      ),
+    );
+  }
   return projectResolvedAnalysisView(input, projection, resolved.value);
 };
 
@@ -373,6 +393,7 @@ const createAnalysisViewEvidence = (
   input: ReadyAnalysisViewInput,
   parent: Evidence,
   result: AnalysisViewResult,
+  evidenceLinks = [parent.evidence_id],
 ): Evidence => {
   // A view names the target its parent observed (a file or a page URL); a
   // parent that names no target is committed through the view's link.
@@ -400,7 +421,16 @@ const createAnalysisViewEvidence = (
       operation: INSPECT_ANALYSIS_VIEW_OPERATION,
       parameters: {
         parent_evidence_id: parent.evidence_id,
-        view: input.view,
+        view:
+          input.view.kind === "legacy-journey"
+            ? {
+                kind: input.view.kind,
+                input_digest: digestCanonicalValue(
+                  input.view,
+                  "Legacy journey request",
+                ),
+              }
+            : input.view,
       },
       result,
       rawResult: null,
@@ -409,6 +439,7 @@ const createAnalysisViewEvidence = (
         // Grouping is whole-capture, so any templated group or parameter makes the result inferred;
         // entity types and identity in an extracted state, and the coverage summarizing it, always are.
         parent.confidence === "inferred" ||
+        result.kind === "legacy-journey" ||
         result.kind === "environment-state" ||
         result.kind === "environment-coverage" ||
         ((result.kind === "api-surface" ||
@@ -447,7 +478,7 @@ const createAnalysisViewEvidence = (
             ]
           : []),
       ],
-      evidenceLinks: [parent.evidence_id],
+      evidenceLinks,
     },
     { immutable: true },
   );

@@ -35,6 +35,7 @@ import {
   retainedEvidenceReferenceSchema,
 } from "../evidenceReference.js";
 import { z } from "zod";
+import { prefixedDigestSchema } from "../digests.js";
 import { browserScenarioViewRequestSchema } from "./browserScenarioViewSchemas.js";
 import { nativeLoadImageViewRequestSchema } from "./nativeLoadImageView.js";
 import { desktopViewRequestSchema } from "./desktopApplicationView.js";
@@ -78,8 +79,26 @@ export const recordedArrayViewSchema = z.strictObject({
   limit: z.int().positive().default(64),
 });
 
+export const legacyJourneyViewRequestSchema = z.strictObject({
+  kind: z.literal("legacy-journey"),
+  journey_id: z.string().min(1).max(256),
+  trace_evidence_ids: z.array(prefixedDigestSchema("ev")).max(4).optional(),
+  verification_evidence_id: prefixedDigestSchema("ev").optional(),
+  observations: z.array(z.json()).max(64),
+  paths: z
+    .array(
+      z.strictObject({
+        entry: z.string().min(1).max(256),
+        condition: z.string().min(1).max(512),
+        steps: z.array(z.string().min(1).max(256)).min(1).max(16),
+      }),
+    )
+    .max(32),
+});
+
 /** Caller-selected projection of already completed analysis Evidence. */
 export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
+  legacyJourneyViewRequestSchema,
   nativeInstructionReferencesRequestSchema,
   nativeObservationViewRequestSchema,
   nativeContextViewRequestSchema,

@@ -10,6 +10,26 @@ export interface ReconstructionObligationCandidatePolicy {
   readonly requiresParserType: boolean;
 }
 
+export const LEGACY_PERSISTENCE_CASES = [
+  {
+    family: "legacy-clean-start",
+    title: "Clean start",
+    nextEvidence: "Observe the first read and effects on a clean profile.",
+  },
+  {
+    family: "legacy-same-build-restart",
+    title: "Same-build restart",
+    nextEvidence:
+      "Observe a distinct process of the same build reading the same profile.",
+  },
+  {
+    family: "legacy-in-place-upgrade",
+    title: "In-place upgrade",
+    nextEvidence:
+      "Observe the new build's first read of the profile seeded by the old build.",
+  },
+] as const;
+
 const APPLICATION_NODE_POLICIES: Readonly<
   Partial<Record<string, ReconstructionObligationCandidatePolicy>>
 > = {

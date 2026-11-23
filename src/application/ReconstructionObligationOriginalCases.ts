@@ -3,6 +3,13 @@ import type { ReconstructionObligation } from "../domain/reconstructionObligatio
 import { evidenceSupportsOriginalAuthority } from "./ReconstructionObligationAuthority.js";
 import type { ReconstructionObligationCandidate } from "./ReconstructionObligationCandidates.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
+import { LEGACY_PERSISTENCE_CASES } from "./ReconstructionObligationPolicies.js";
+import {
+  admitLegacyJourneyReceipt,
+  LEGACY_VERIFICATION_OPERATION,
+  LEGACY_VERIFICATION_PREDICATE,
+} from "./legacyJourneyVerification.js";
+import { legacyJourneyReceiptSchema } from "../domain/legacyJourneyProject.js";
 
 type Binding = NonNullable<ReconstructionObligation["binding"]>;
 type Diagnostic = ReconstructionObligation["diagnostics"][number];
@@ -33,8 +40,50 @@ export const originalCaseDiagnostics = (
   candidate: ReconstructionObligationCandidate,
   originalCases: ReconstructionObligation["observed_cases"],
   evidenceById: ReadonlyMap<string, Evidence>,
+  binding: Binding | null,
 ): Diagnostic[] => {
   const diagnostics: Diagnostic[] = [];
+  if (
+    LEGACY_PERSISTENCE_CASES.some(
+      ({ family }) => family === candidate.family,
+    ) &&
+    !originalCases.some(({ evidence_id, location }) => {
+      const evidence = evidenceById.get(evidence_id);
+      if (
+        !binding ||
+        !evidence ||
+        evidence.operation !== LEGACY_VERIFICATION_OPERATION ||
+        evidence.predicate_type !== LEGACY_VERIFICATION_PREDICATE ||
+        !candidate.authority_references.some((ref) =>
+          evidence.evidence_links.includes(ref.evidence_id),
+        ) ||
+        binding.verifier?.result_evidence_id !== evidence_id
+      )
+        return false;
+      const raw = legacyJourneyReceiptSchema.safeParse(evidence.raw_result);
+      if (!raw.success || !candidate.target.artifact_sha256) return false;
+      const cases = raw.data.cases;
+      const index = cases.findIndex(
+        (item) =>
+          item.family === candidate.family &&
+          item.obligation_id === candidate.obligation_id &&
+          item.obligation_version === candidate.obligation_version &&
+          item.status !== "unknown",
+      );
+      if (index < 0 || location !== `/raw_result/cases/${index}`) return false;
+      return admitLegacyJourneyReceipt(raw.data, {
+        journeyId: raw.data.journey_id,
+        baseline: candidate.target.artifact_sha256,
+        candidate: binding.owner.owner_sha256,
+        obligations: cases,
+      }).ok;
+    })
+  )
+    diagnostics.push({
+      code: "missing-original-case",
+      detail:
+        "A journey obligation needs a case-specific original observation from the legacy verifier.",
+    });
   // Retain optional case rows, but never leave one of their Evidence links
   // unresolved merely because its kind is not required for closure.
   for (const { kind, evidence_id: evidenceId } of originalCases)

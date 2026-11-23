@@ -109,6 +109,33 @@ export const registerApplicationCommands = (
     },
   });
   registerObligationLedgerCommand(cli, logger);
+  registerReconstructionDocumentCommand(
+    cli,
+    logger,
+    "characterize_legacy_application_journey",
+    cliCommandFor("characterize_legacy_application_journey"),
+    "Characterize and optionally export a legacy application journey",
+    async (input, signal) => {
+      const [
+        { characterizeLegacyApplicationJourney },
+        { javascriptSourceAnalysis },
+        { cliJavaScriptAnalysisScope },
+      ] = await Promise.all([
+        import("../application/legacyJourneyWorkflow.js"),
+        import("../composition/javascriptSourceAnalysis.js"),
+        import("./javascriptApplicationAnalysis.js"),
+      ]);
+      const result = await characterizeLegacyApplicationJourney(input, {
+        signal,
+        resources: cliJavaScriptAnalysisScope(),
+        analysis: {
+          sourceAnalysis: javascriptSourceAnalysis,
+          environment: process.env,
+        },
+      });
+      return result.ok ? { ok: true, value: result.value.evidence } : result;
+    },
+  );
   registerCoverageCommand(cli, logger);
   registerEvidenceJsonCommand({
     cli,
@@ -165,6 +192,7 @@ export const registerApplicationCommands = (
 const registerReconstructionDocumentCommand = <
   Operation extends
     | "build_reconstruction_obligation_ledger"
+    | "characterize_legacy_application_journey"
     | "evaluate_reconstruction_coverage",
 >(
   cli: CliInstance,
@@ -174,6 +202,7 @@ const registerReconstructionDocumentCommand = <
   description: string,
   workflow: (
     input: unknown,
+    signal: AbortSignal,
   ) => Promise<
     | { readonly ok: true; readonly value: JsonValue }
     | { readonly ok: false; readonly error: AnalysisError }
@@ -184,8 +213,8 @@ const registerReconstructionDocumentCommand = <
     logger,
     contractNamed(APPLICATION_TOOL_CONTRACTS, operation),
     { command, description, document: workflowJsonDescription },
-    async (input) => {
-      const result = await workflow(input);
+    async (input, { signal }) => {
+      const result = await workflow(input, signal);
       return result.ok
         ? result.value
         : {
