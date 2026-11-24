@@ -1,10 +1,23 @@
 import { z } from "zod";
 
-import { digestSchema } from "./digests.js";
+import { digestSchema, prefixedDigestSchema } from "./digests.js";
 import { STABLE_IDENTIFIER_PATTERN } from "./stringPatterns.js";
 import { obligationCaseKindSchema } from "./reconstructionObligationLedgerSchemas.js";
 
 const stableIdSchema = z.string().regex(STABLE_IDENTIFIER_PATTERN);
+const reconstructionRunReceiptSchema = z.strictObject({
+  baseline_owner_sha256: digestSchema,
+  candidate_owner_sha256: digestSchema,
+  conditions_sha256: digestSchema,
+  // lifecycle-state: Whether the verification run finished cleaning up its resources.
+  cleanup: z.enum(["complete", "incomplete"]),
+  witnesses: z.array(
+    z.strictObject({
+      checkpoint_id: stableIdSchema,
+      evidence_id: prefixedDigestSchema("ev"),
+    }),
+  ),
+});
 
 /** Caller-produced proof binds each claim to one implementation and revision. */
 export const reconstructionObligationProofSchema = z.strictObject({
@@ -28,6 +41,7 @@ export const reconstructionObligationProofSchema = z.strictObject({
             passed: z.boolean(),
           }),
         ),
+        run: reconstructionRunReceiptSchema.optional(),
       }),
     )
     .min(1),

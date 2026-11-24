@@ -1,4 +1,5 @@
 import type { z } from "zod";
+import type { investigationGraphGovernanceItemSchema } from "./investigationGraphView.js";
 import type { AnalysisInputError } from "../analysisErrorCore.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { evidenceFileTarget, type Evidence } from "../evidence.js";
@@ -41,6 +42,10 @@ export interface AnalysisViewParent {
   readonly artifact?: { readonly path: string; readonly sha256: string } | null;
   /** Parent Evidence parameters, when the parent operation records them. */
   readonly parameters?: unknown;
+  /** Exact decisions admitted by the investigation before projection. */
+  readonly investigationGovernance?: z.output<
+    typeof investigationGraphGovernanceItemSchema
+  >[];
 }
 import {
   canBorrowParsedJsonSnapshot,

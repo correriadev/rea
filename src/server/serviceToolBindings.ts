@@ -412,6 +412,7 @@ type DesktopBuildTool =
 /** The artifact resource scope application workflows read caller-named files under. */
 export interface ApplicationWorkflowToolOptions {
   readonly resources: ArtifactResourceScope;
+  readonly investigation?: BinarySessionPort | undefined;
 }
 
 /** A requested view, or the summary view a `detail: "summary"` request selects. */
@@ -1058,7 +1059,7 @@ const SERVICE_TOOL_BINDINGS = {
   // Application workflows complete Evidence from session-held Evidence or
   // caller-named files under analysis admission; a requested view or summary
   // is staged against it.
-  applicationWorkflows: (({ resources }, { evidenceById }) => {
+  applicationWorkflows: (({ resources, investigation }, { evidenceById }) => {
     const playwright = new PlaywrightTraceService(
       new PlaywrightTraceDecoder(resources),
     );
@@ -1130,6 +1131,34 @@ const SERVICE_TOOL_BINDINGS = {
           compareJavaScriptExportShapesExecution(input, evidenceById, {
             signal,
           }),
+      },
+      update_investigation_graph: {
+        admission: "application",
+        workflow: async (input, { signal }) => {
+          const { updateInvestigationGraph } =
+            await import("../application/investigation/InvestigationGraphService.js");
+          const { emptyInvestigationSnapshotReader } =
+            await import("../application/investigation/InvestigationSnapshotBundle.js");
+          return updateInvestigationGraph(
+            input,
+            investigation ?? emptyInvestigationSnapshotReader,
+            signal,
+          );
+        },
+      },
+      record_behavior_governance: {
+        admission: "application",
+        workflow: async (input, { signal }) => {
+          const { recordBehaviorGovernance } =
+            await import("../application/investigation/BehaviorGovernanceService.js");
+          const { emptyInvestigationSnapshotReader } =
+            await import("../application/investigation/InvestigationSnapshotBundle.js");
+          return recordBehaviorGovernance(
+            input,
+            investigation ?? emptyInvestigationSnapshotReader,
+            signal,
+          );
+        },
       },
       // The ledger refuses Evidence formats through the format owner.
       build_reconstruction_obligation_ledger: {

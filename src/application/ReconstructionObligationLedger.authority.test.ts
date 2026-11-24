@@ -1,6 +1,7 @@
 import { unknownTarget } from "../domain/targetIdentity.js";
 import { describe, expect, it } from "vitest";
 import { reconstructionProofApplicabilityCases } from "../../tests/fixtures/reconstructionProofApplicability.js";
+import { createEvidenceBundle } from "../domain/evidenceBundle.js";
 
 import {
   boundProofEvidence,
@@ -9,11 +10,14 @@ import {
   processEvidence,
   proofEvidence,
   request,
+  resolveRequest,
   reviewedObligation,
   readyReviewedLedgerRequest,
 } from "./ReconstructionObligationLedger.fixture.js";
 import { createEvidence, evidenceSubjectInput } from "../domain/evidence.js";
 import type { ReviewedReconstructionObligation } from "../domain/reconstructionObligationLedgerSchemas.js";
+import { deriveReconstructionObligationCandidates } from "./ReconstructionObligationCandidates.js";
+import { evaluateReconstructionObligationLedger } from "./ReconstructionObligationLedgerEvaluation.js";
 
 describe("selected reconstruction fixture outcomes", () => {
   it.each(reconstructionProofApplicabilityCases())(
@@ -371,4 +375,307 @@ describe("reconstruction obligation ledger fail-closed behavior", () => {
       reviewed.obligation_id,
     ]);
   });
+});
+
+const runId = "settings-run-1";
+const expectedRun = {
+  baseline_owner_sha256: "b".repeat(64),
+  candidate_owner_sha256: "1".repeat(64),
+  conditions_sha256: "c".repeat(64),
+  required_witnesses: ["checkpoint.startup"],
+};
+
+const runCases = [
+  {
+    name: "legacy proof remains readable without run requirements",
+    optIn: false,
+    receipt: "legacy",
+    reportFailure: false,
+    expectedStatus: "ready",
+    reason: null,
+  },
+  {
+    name: "legacy proof cannot satisfy opted-in run requirements",
+    optIn: true,
+    receipt: "legacy",
+    reportFailure: false,
+    expectedStatus: "open",
+    reason: "run-requirements-missing",
+  },
+  {
+    name: "matching run receipt and retained witness satisfy the requirement",
+    optIn: true,
+    receipt: "matching",
+    reportFailure: false,
+    expectedStatus: "ready",
+    reason: null,
+  },
+  {
+    name: "stale build receipt with a reported failure stays inapplicable",
+    optIn: true,
+    receipt: "wrong-build",
+    reportFailure: true,
+    expectedStatus: "open",
+    reason: "run-build-mismatch",
+  },
+  {
+    name: "receipt with different normalized conditions stays inapplicable",
+    optIn: true,
+    receipt: "wrong-conditions",
+    reportFailure: false,
+    expectedStatus: "open",
+    reason: "run-conditions-mismatch",
+  },
+  {
+    name: "receipt missing a required checkpoint stays open",
+    optIn: true,
+    receipt: "missing-witness",
+    reportFailure: false,
+    expectedStatus: "open",
+    reason: "run-witness-missing",
+  },
+  {
+    name: "receipt cannot use a witness absent from its evidence links",
+    optIn: true,
+    receipt: "unlinked-witness",
+    reportFailure: false,
+    expectedStatus: "open",
+    reason: "run-witness-unlinked",
+  },
+  {
+    name: "receipt with incomplete cleanup stays open",
+    optIn: true,
+    receipt: "incomplete-cleanup",
+    reportFailure: false,
+    expectedStatus: "open",
+    reason: "run-cleanup-incomplete",
+  },
+  ...(
+    [
+      "wrong-witness-run",
+      "wrong-witness-build",
+      "wrong-witness-conditions",
+      "unbound-witness",
+    ] as const
+  ).map((receipt) => ({
+    name: `${receipt} cannot close a governed obligation`,
+    optIn: true,
+    receipt,
+    reportFailure: false,
+    expectedStatus: "open",
+    reason: "run-witness-scope-mismatch",
+  })),
+  {
+    name: "a baseline checkpoint can explicitly require the baseline build",
+    optIn: true,
+    receipt: "baseline-witness",
+    reportFailure: false,
+    expectedStatus: "ready",
+    reason: null,
+  },
+] as const;
+
+type RunCase = (typeof runCases)[number];
+
+const createRunFixture = (receipt: RunCase["receipt"]) => {
+  const witness = createEvidence(
+    unknownTarget("not-observed"),
+    { id: "runtime-witness", name: "Runtime witness", version: "1" },
+    {
+      predicateType: "rea.runtime-witness",
+      operation: "observe_checkpoint",
+      parameters: {
+        checkpoint_id: "checkpoint.startup",
+        ...(receipt === "unbound-witness"
+          ? {}
+          : {
+              run_id:
+                receipt === "wrong-witness-run" ? "settings-run-2" : runId,
+              artifact_sha256:
+                receipt === "wrong-witness-build" ||
+                receipt === "baseline-witness"
+                  ? expectedRun.baseline_owner_sha256
+                  : expectedRun.candidate_owner_sha256,
+              conditions_sha256:
+                receipt === "wrong-witness-conditions"
+                  ? "f".repeat(64)
+                  : expectedRun.conditions_sha256,
+            }),
+      },
+      result: { observed: true },
+      confidence: "observed",
+      authority: "controlled-replay",
+    },
+  );
+  const run =
+    receipt === "legacy"
+      ? undefined
+      : {
+          baseline_owner_sha256:
+            receipt === "wrong-build"
+              ? "d".repeat(64)
+              : expectedRun.baseline_owner_sha256,
+          candidate_owner_sha256: expectedRun.candidate_owner_sha256,
+          conditions_sha256:
+            receipt === "wrong-conditions"
+              ? "e".repeat(64)
+              : expectedRun.conditions_sha256,
+          cleanup: receipt === "incomplete-cleanup" ? "incomplete" : "complete",
+          witnesses:
+            receipt === "missing-witness"
+              ? []
+              : [
+                  {
+                    checkpoint_id: "checkpoint.startup",
+                    evidence_id: witness.evidence_id,
+                  },
+                ],
+        };
+  return { witness, run };
+};
+
+describe("opt-in reconstruction run requirements", () => {
+  it.each(runCases)(
+    "$name",
+    ({ optIn, receipt, reportFailure, expectedStatus, reason }) => {
+      const input = readyReviewedLedgerRequest();
+      const oldProofId =
+        input.manifest.bindings[0]?.verifier?.result_evidence_id;
+      if (oldProofId === undefined)
+        throw new Error("Expected a reviewed proof binding");
+      const oldProof = input.evidence_bundle.records.find(
+        ({ evidence_id }) => evidence_id === oldProofId,
+      );
+      if (oldProof === undefined)
+        throw new Error("Expected the reviewed proof Evidence");
+
+      const { witness, run } = createRunFixture(receipt);
+      const proof =
+        run === undefined
+          ? oldProof
+          : createEvidence(
+              evidenceSubjectInput(oldProof.subject),
+              oldProof.provider,
+              {
+                predicateType: oldProof.predicate_type,
+                operation: oldProof.operation,
+                parameters: { ...oldProof.parameters, run_id: runId },
+                result: {
+                  ...(oldProof.normalized_result as unknown as Record<
+                    string,
+                    unknown
+                  >),
+                  bindings: (
+                    oldProof.normalized_result as unknown as {
+                      bindings: readonly Record<string, unknown>[];
+                    }
+                  ).bindings.map((binding) => ({
+                    ...binding,
+                    fixtures: (
+                      binding.fixtures as readonly Record<string, unknown>[]
+                    ).map((fixture) => ({
+                      ...fixture,
+                      passed: !reportFailure,
+                    })),
+                    verifiers: (
+                      binding.verifiers as readonly Record<string, unknown>[]
+                    ).map((verifier) => ({
+                      ...verifier,
+                      passed: !reportFailure,
+                    })),
+                    ...(run === undefined ? {} : { run }),
+                  })),
+                },
+                confidence: "observed",
+                authority: oldProof.authority,
+                evidenceLinks:
+                  receipt === "unlinked-witness" ||
+                  receipt === "missing-witness"
+                    ? []
+                    : [witness.evidence_id],
+              },
+            );
+      const records = input.evidence_bundle.records.filter(
+        ({ evidence_id }) => evidence_id !== oldProofId,
+      );
+      const requestWithRunEvidence = {
+        ...input,
+        evidence_bundle: createEvidenceBundle([
+          ...records,
+          ...(run === undefined || receipt === "missing-witness"
+            ? []
+            : [witness]),
+          proof,
+        ]),
+        manifest: {
+          ...input.manifest,
+          bindings: input.manifest.bindings.map((binding) => ({
+            ...binding,
+            fixtures: binding.fixtures.map((fixture) => ({
+              ...fixture,
+              evidence_ids: fixture.evidence_ids.map((id) =>
+                id === oldProofId ? proof.evidence_id : id,
+              ),
+            })),
+            verifier:
+              binding.verifier === null
+                ? null
+                : {
+                    ...binding.verifier,
+                    result_evidence_id: proof.evidence_id,
+                  },
+          })),
+        },
+      };
+      const resolved = resolveRequest(requestWithRunEvidence);
+      const candidateSet = deriveReconstructionObligationCandidates(resolved);
+      const candidates = candidateSet.candidates.map((candidate) => ({
+        ...candidate,
+        ...(optIn
+          ? {
+              run_requirements:
+                receipt === "baseline-witness"
+                  ? {
+                      ...expectedRun,
+                      required_witnesses: [
+                        {
+                          checkpoint_id: "checkpoint.startup",
+                          build_role: "baseline" as const,
+                        },
+                      ],
+                    }
+                  : expectedRun,
+            }
+          : {}),
+      }));
+      const ledger = evaluateReconstructionObligationLedger({
+        candidates,
+        sources: resolved.sources,
+        manifest: resolved.manifest,
+        generationLimitations: candidateSet.limitations,
+      });
+      const obligation = ledger.obligations[0];
+
+      expect(ledger.status).toBe(expectedStatus);
+      if (reason === null) {
+        expect(obligation?.status).toBe("verified");
+        expect(obligation?.diagnostics).toEqual([]);
+      } else {
+        expect(obligation?.status).toBe("implemented");
+        expect(
+          obligation?.diagnostics.some(
+            ({ code, detail }) =>
+              [
+                "inapplicable-fixture-proof",
+                "inapplicable-verifier-proof",
+              ].includes(code) && detail.includes(reason),
+          ),
+        ).toBe(true);
+        if (reportFailure)
+          for (const code of obligation?.diagnostics.map(({ code }) => code) ??
+            [])
+            expect(["fixture-failed", "verifier-failed"]).not.toContain(code);
+      }
+    },
+  );
 });

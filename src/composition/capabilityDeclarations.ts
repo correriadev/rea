@@ -52,6 +52,7 @@ import {
   PE_RESOURCES_PROVIDER,
   RELEASE_EXPOSURE_PROVIDER,
   WEB_SCRIPT_EXPORT_PROVIDER,
+  REA_WORKFLOW_PROVIDER,
   WINDOWS_SHORTCUT_PROVIDER,
 } from "../domain/investigationProviders.js";
 import { SQLITE_PROVIDER_IDENTITY } from "../domain/sqlite/SqliteProviderIdentity.js";
@@ -180,6 +181,10 @@ export const CAPABILITY_DECLARATIONS = {
   },
   applicationWorkflows: {
     providers: [
+      providerBinding(REA_WORKFLOW_PROVIDER, [
+        "record_behavior_governance",
+        "update_investigation_graph",
+      ]),
       providerBinding(JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER, [
         "build_reconstruction_obligation_ledger",
         "compare_application_versions",

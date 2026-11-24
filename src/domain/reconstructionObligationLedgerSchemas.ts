@@ -137,6 +137,36 @@ const parserTypeBindingSchema = z.strictObject({
   domain_type: textSchema,
 });
 
+export const reconstructionRunRequirementsSchema = z.strictObject({
+  baseline_owner_sha256: digestSchema,
+  candidate_owner_sha256: digestSchema,
+  conditions_sha256: digestSchema,
+  required_witnesses: z
+    .array(
+      z.union([
+        stableIdSchema,
+        z.strictObject({
+          checkpoint_id: stableIdSchema,
+          build_role: z.enum(["baseline", "candidate"]),
+        }),
+      ]),
+    )
+    .min(1)
+    .refine(
+      (witnesses) =>
+        new Set(
+          witnesses.map((witness) =>
+            typeof witness === "string" ? witness : witness.checkpoint_id,
+          ),
+        ).size === witnesses.length,
+      "Each required checkpoint must have one build role",
+    ),
+});
+
+export type ReconstructionRunRequirements = z.infer<
+  typeof reconstructionRunRequirementsSchema
+>;
+
 const fixtureBindingSchema = z.strictObject({
   fixture_id: stableIdSchema,
   case_kind: obligationCaseKindSchema,
@@ -196,6 +226,7 @@ export const reviewedReconstructionObligationSchema = z.strictObject({
   residual_unknown_ids: z.array(stableIdSchema),
   unavailable_authority: z.array(textSchema),
   required_next_evidence: z.array(textSchema),
+  run_requirements: reconstructionRunRequirementsSchema.optional(),
   disposition: z.enum(["active", "blocked", "out-of-scope"]),
   review_evidence_ids: z.array(evidenceIdSchema).min(1),
 });
@@ -253,6 +284,7 @@ export const reconstructionObligationSchema = z.strictObject({
   residual_unknown_ids: z.array(stableIdSchema),
   unavailable_authority: z.array(textSchema),
   required_next_evidence: z.array(textSchema),
+  run_requirements: reconstructionRunRequirementsSchema.optional(),
   binding: reconstructionObligationManifestBindingSchema.nullable(),
   status: obligationStatusSchema,
   diagnostics: z.array(diagnosticSchema),

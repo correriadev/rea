@@ -1,4 +1,5 @@
 import { projectWebSourceLocationView } from "./webSourceLocationView.js";
+import { projectInvestigationGraphView } from "./investigationGraphView.js";
 import { projectNativeProcedureReferencesView } from "./nativeProcedureReferencesView.js";
 import { projectPlaywrightTraceView } from "./playwrightTraceView.js";
 import { projectApiContractView } from "./apiContractView.js";
@@ -170,6 +171,7 @@ const retain = (
 ): readonly [string, RetainedViewProjector] => [operation, project];
 
 const retainedViewProjectors = new Map<string, RetainedViewProjector>([
+  retain("update_investigation_graph", projectInvestigationGraphView),
   retain("procedure_pseudo_code", projectProcedurePseudocodeView),
   retain("inspect_native_instruction", projectNativeInstructionReferencesView),
   retain("trace_feature", projectNativeFeatureTraceView),
@@ -316,18 +318,20 @@ export const projectAnalysisView = (
       ]),
     );
   const expectedPredicate =
-    parent.operation === "match_native_functions"
-      ? NATIVE_FUNCTION_MATCHING_PREDICATE
-      : parent.operation === "analyze_function" ||
-          parent.operation === "procedure_references" ||
-          parent.operation === "procedure_pseudo_code" ||
-          parent.operation === "inspect_native_instruction" ||
-          parent.operation === "trace_feature" ||
-          parent.operation === "batch_decompile" ||
-          isNativeObservationOperation(parent.operation) ||
-          isNativeInventoryOperation(parent.operation)
-        ? ANALYSIS_EVIDENCE_PREDICATE
-        : undefined;
+    parent.operation === "update_investigation_graph"
+      ? "rea.investigation-graph"
+      : parent.operation === "match_native_functions"
+        ? NATIVE_FUNCTION_MATCHING_PREDICATE
+        : parent.operation === "analyze_function" ||
+            parent.operation === "procedure_references" ||
+            parent.operation === "procedure_pseudo_code" ||
+            parent.operation === "inspect_native_instruction" ||
+            parent.operation === "trace_feature" ||
+            parent.operation === "batch_decompile" ||
+            isNativeObservationOperation(parent.operation) ||
+            isNativeInventoryOperation(parent.operation)
+          ? ANALYSIS_EVIDENCE_PREDICATE
+          : undefined;
   if (
     expectedPredicate !== undefined &&
     parent.predicateType !== expectedPredicate

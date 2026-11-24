@@ -11,6 +11,7 @@ import { ANALYSIS_VIEW_PROVIDER } from "../../domain/investigationProviders.js";
 import type { EvidenceLookup } from "../EvidenceInputResolver.js";
 import { resolveEvidenceInput } from "../EvidenceInputResolver.js";
 import type { EvidenceWriter } from "../investigation/InvestigationRecordPort.js";
+import { resolveBehaviorGovernanceView } from "../investigation/BehaviorGovernanceService.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisInputError,
@@ -215,7 +216,13 @@ export const inspectAnalysisViewValidated = (
   }
   const resolved = resolveAnalysisViewSource(input.source, lookup);
   if (!resolved.ok) return resolved;
-  return projectResolvedAnalysisView(input, projection, resolved.value);
+  return projectResolvedAnalysisView(
+    input,
+    projection,
+    resolved.value,
+    undefined,
+    lookup,
+  );
 };
 
 /** Keep payload ownership separate from this delivery's display-only subject. */
@@ -224,7 +231,17 @@ const projectResolvedAnalysisView = (
   projection: ReturnType<typeof prepareAnalysisViewProjection>,
   parent: Evidence,
   selectedTarget?: EvidenceSubjectTarget,
+  lookup?: EvidenceLookup,
 ): Result<Evidence, AnalysisError> => {
+  const selections =
+    input.view.kind === "investigation-graph"
+      ? input.view.governance_evidence_ids
+      : undefined;
+  const governance =
+    selections === undefined
+      ? ok(undefined)
+      : resolveBehaviorGovernanceView(selections, parent.evidence_id, lookup);
+  if (!governance.ok) return governance;
   const presentation =
     selectedTarget === undefined
       ? parent
@@ -247,6 +264,9 @@ const projectResolvedAnalysisView = (
     limitations: parent.limitations,
     parameters: parent.parameters,
     artifact: viewArtifact(presentation),
+    ...(governance.value === undefined
+      ? {}
+      : { investigationGovernance: governance.value }),
   });
   if (!projected.ok) return projected;
   const identity = validateAnalysisViewSubject(
@@ -447,7 +467,12 @@ const createAnalysisViewEvidence = (
             ]
           : []),
       ],
-      evidenceLinks: [parent.evidence_id],
+      evidenceLinks: [
+        parent.evidence_id,
+        ...(result.kind === "investigation-graph"
+          ? (result.governance?.map(({ evidence_id }) => evidence_id) ?? [])
+          : []),
+      ],
     },
     { immutable: true },
   );

@@ -3,6 +3,14 @@ import { API_CONTRACT_TOOL_CONTRACTS } from "./apiContractToolContracts.js";
 import { NTFS_JOURNAL_TOOL_CONTRACTS } from "./ntfsJournalToolContracts.js";
 import { applicationInventoryProjectionInputSchema } from "../domain/mobileApplicationGraphProjection.js";
 import { z } from "zod";
+import {
+  behaviorGovernanceRequestSchema,
+  behaviorGovernancePayloadSchema,
+} from "../domain/behaviorGovernance.js";
+import {
+  investigationGraphSchema,
+  investigationGraphUpdateSchema,
+} from "../domain/investigationGraph.js";
 import { EVIDENCE_FORMAT_REVISION } from "../domain/evidenceFormat.js";
 import {
   featureTraceSummaryViewResultSchema,
@@ -103,6 +111,61 @@ export const APPLICATION_TOOL_CONTRACTS = [
   ...API_CONTRACT_TOOL_CONTRACTS,
   ...NTFS_JOURNAL_TOOL_CONTRACTS,
   ...PLAYWRIGHT_TRACE_TOOL_CONTRACTS,
+  {
+    name: "record_behavior_governance",
+    cli: true,
+    ...toolContractMetadata("record_behavior_governance", evidenceEffects),
+    description:
+      "Record an immutable disposition against an exact investigation graph claim. Optionally select a reviewed obligation revision. The actor is declared and approval remains pending. Use the investigation-graph view to retrieve the disposition with its scenario.",
+    kind: "application",
+    inputSchema: behaviorGovernanceRequestSchema,
+    outputSchema: evidenceResultOf(behaviorGovernancePayloadSchema),
+    examples: [
+      {
+        title: "Propose preservation of one mapped claim",
+        input: {
+          kind: "migration",
+          scope_id: "upgrade",
+          revision_id: "r1",
+          previous: null,
+          mapping_evidence: retained("ev_" + HASH),
+          claim_id: "save-layout",
+          disposition: "preserve",
+          reason: { status: "unknown" },
+          actor_claim: { status: "declared", value: "analyst" },
+        },
+      },
+    ],
+  },
+  {
+    name: "update_investigation_graph",
+    cli: true,
+    ...toolContractMetadata("update_investigation_graph", evidenceEffects),
+    description:
+      "Create an immutable investigation graph revision from explicitly selected Evidence. An optional predecessor preserves history. In MCP the returned Evidence is retained for inspect_analysis_view with kind investigation-graph. This workflow does not open or run a target.",
+    kind: "application",
+    inputSchema: investigationGraphUpdateSchema,
+    outputSchema: evidenceResultOf(investigationGraphSchema),
+    examples: [
+      {
+        title: "Start a scoped scenario",
+        input: {
+          scope_id: "settings",
+          target_revision_id: "legacy",
+          sources: [],
+          patch: {
+            components: [],
+            scenarios: [{ id: "layout", name: "Save layout" }],
+            variants: [],
+            relations: [],
+            claims: [],
+            gaps: [],
+            coverage: { status: "unknown", limitations: [] },
+          },
+        },
+      },
+    ],
+  },
   {
     name: "search_guidance",
     ...toolContractMetadata("search_guidance", toolEffects()),

@@ -5,7 +5,12 @@ import {
   type ReconstructionObligationProof,
 } from "../domain/reconstructionObligationProof.js";
 import type { Evidence } from "../domain/evidence.js";
-import type { ReconstructionObligation } from "../domain/reconstructionObligationLedgerSchemas.js";
+import { STABLE_IDENTIFIER_PATTERN } from "../domain/stringPatterns.js";
+import { isRecord } from "../kernel/isRecord.js";
+import type {
+  ReconstructionObligation,
+  ReconstructionRunRequirements,
+} from "../domain/reconstructionObligationLedgerSchemas.js";
 
 type ProofAuthority = ReconstructionObligation["required_fixture_authority"];
 type OriginalAuthority =
@@ -36,15 +41,29 @@ type ProofRejection =
   | "owner-mismatch"
   | "revision-mismatch"
   | "claim-mismatch"
-  | "failed-proof";
+  | "failed-proof"
+  | "run-requirements-missing"
+  | "run-build-mismatch"
+  | "run-conditions-mismatch"
+  | "run-witness-missing"
+  | "run-witness-unlinked"
+  | "run-witness-scope-mismatch"
+  | "run-cleanup-incomplete";
 
 type ParsedProof = Result<
   {
     readonly authority: Evidence["authority"];
     readonly result: ReconstructionObligationProof;
+    readonly evidenceLinks: Evidence["evidence_links"];
+    readonly runId: string | null;
   },
   ProofRejection
 >;
+
+interface ProofQualificationContext {
+  readonly evidence: ReadonlyMap<string, Evidence>;
+  readonly runRequirements?: ReconstructionRunRequirements;
+}
 
 const proofEvidenceAuthorities: Readonly<
   Record<ProofAuthority, readonly Evidence["authority"][]>
@@ -107,8 +126,17 @@ export const parseReconstructionProofEvidence = (
   const parsed = reconstructionObligationProofSchema.safeParse(
     evidence.normalized_result,
   );
+  const runId = evidence.parameters.run_id;
   return parsed.success
-    ? ok({ authority: evidence.authority, result: parsed.data })
+    ? ok({
+        authority: evidence.authority,
+        result: parsed.data,
+        evidenceLinks: evidence.evidence_links,
+        runId:
+          typeof runId === "string" && STABLE_IDENTIFIER_PATTERN.test(runId)
+            ? runId
+            : null,
+      })
     : err("invalid-proof");
 };
 
@@ -117,6 +145,7 @@ export const qualifyReconstructionProof = (
   proof: ParsedProof,
   authority: ProofAuthority,
   expected: ExpectedProof,
+  context?: ProofQualificationContext,
 ): Result<null, ProofRejection> => {
   if (!proof.ok) return proof;
   if (!proofEvidenceAuthorities[authority].includes(proof.value.authority))
@@ -133,25 +162,114 @@ export const qualifyReconstructionProof = (
     (binding) => binding.obligation_version === expected.obligationVersion,
   );
   if (revisions.length === 0) return err("revision-mismatch");
-  const outcomes = revisions.flatMap((binding) =>
-    expected.kind === "fixture"
-      ? binding.fixtures
-          .filter(
+  const claims = revisions.flatMap((binding) => {
+    const matches =
+      expected.kind === "fixture"
+        ? binding.fixtures.filter(
             (fixture) =>
               fixture.fixture_id === expected.fixtureId &&
               fixture.case_kind === expected.caseKind,
           )
-          .map(({ passed }) => passed)
-      : binding.verifiers
-          .filter(
+        : binding.verifiers.filter(
             (verifier) =>
               verifier.verifier_id === expected.verifierId &&
               verifier.claim_id === expected.claimId,
-          )
-          .map(({ passed }) => passed),
+          );
+    return matches.map((claim) => ({ binding, passed: claim.passed }));
+  });
+  if (claims.length === 0) return err("claim-mismatch");
+  if (context?.runRequirements !== undefined) {
+    let hasApplicableClaim = false;
+    let hasApplicableFailure = false;
+    let firstInapplicable: ProofRejection | undefined;
+    for (const { binding, passed } of claims) {
+      const run = qualifyRunReceipt(
+        binding,
+        expected.ownerSha256,
+        proof.value,
+        context.runRequirements,
+        context.evidence,
+      );
+      if (!run.ok) {
+        firstInapplicable ??= run.error;
+        continue;
+      }
+      hasApplicableClaim = true;
+      if (!passed) hasApplicableFailure = true;
+    }
+    if (hasApplicableFailure) return err("failed-proof");
+    if (hasApplicableClaim) return ok(null);
+    return err(firstInapplicable ?? "run-requirements-missing");
+  }
+  return claims.every(({ passed }) => passed) ? ok(null) : err("failed-proof");
+};
+
+const qualifyRunReceipt = (
+  binding: ReconstructionObligationProof["bindings"][number],
+  actualOwnerSha256: string,
+  proof: {
+    readonly evidenceLinks: readonly string[];
+    readonly runId: string | null;
+  },
+  requirements: ReconstructionRunRequirements,
+  evidence: ReadonlyMap<string, Evidence>,
+): Result<null, ProofRejection> => {
+  const receipt = binding.run;
+  if (receipt === undefined) return err("run-requirements-missing");
+  if (
+    requirements.candidate_owner_sha256 !== actualOwnerSha256 ||
+    receipt.baseline_owner_sha256 !== requirements.baseline_owner_sha256 ||
+    receipt.candidate_owner_sha256 !== requirements.candidate_owner_sha256
+  )
+    return err("run-build-mismatch");
+  if (receipt.conditions_sha256 !== requirements.conditions_sha256)
+    return err("run-conditions-mismatch");
+  if (receipt.cleanup !== "complete") return err("run-cleanup-incomplete");
+  for (const required of requirements.required_witnesses) {
+    const checkpointId =
+      typeof required === "string" ? required : required.checkpoint_id;
+    const witnesses = receipt.witnesses.filter(
+      (witness) => witness.checkpoint_id === checkpointId,
+    );
+    if (witnesses.length !== 1) return err("run-witness-missing");
+    const witness = witnesses[0];
+    if (witness === undefined) return err("run-witness-missing");
+    const witnessEvidence = evidence.get(witness.evidence_id);
+    if (witnessEvidence === undefined) return err("run-witness-missing");
+    if (!proof.evidenceLinks.includes(witness.evidence_id))
+      return err("run-witness-unlinked");
+    if (!isObservedRuntimeCheckpoint(witnessEvidence, checkpointId))
+      return err("run-witness-missing");
+    const artifactSha256 =
+      typeof required !== "string" && required.build_role === "baseline"
+        ? receipt.baseline_owner_sha256
+        : receipt.candidate_owner_sha256;
+    const observed = witnessEvidence.parameters;
+    if (
+      proof.runId === null ||
+      observed.run_id !== proof.runId ||
+      observed.artifact_sha256 !== artifactSha256 ||
+      observed.conditions_sha256 !== receipt.conditions_sha256
+    )
+      return err("run-witness-scope-mismatch");
+  }
+  return ok(null);
+};
+
+const isObservedRuntimeCheckpoint = (
+  evidence: Evidence,
+  checkpointId: string,
+): boolean => {
+  const parameters = evidence.parameters;
+  const result = evidence.normalized_result;
+  return (
+    evidence.predicate_type === "rea.runtime-witness" &&
+    evidence.operation === "observe_checkpoint" &&
+    parameters.checkpoint_id === checkpointId &&
+    isRecord(result) &&
+    result.observed === true &&
+    evidenceSupportsOriginalAuthority(evidence, "runtime")
   );
-  if (outcomes.length === 0) return err("claim-mismatch");
-  return outcomes.every((passed) => passed) ? ok(null) : err("failed-proof");
 };
 
 /** Check that Evidence observes the original at the required boundary. */

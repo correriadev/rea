@@ -251,6 +251,9 @@ const evaluateObligation = (
     residual_unknown_ids: candidate.residual_unknown_ids,
     unavailable_authority: candidate.unavailable_authority,
     required_next_evidence: candidate.required_next_evidence,
+    ...(candidate.run_requirements === undefined
+      ? {}
+      : { run_requirements: candidate.run_requirements }),
     binding,
     status: obligationStatus(candidate, binding, diagnostics),
     diagnostics: uniqueDiagnostics(diagnostics),
@@ -300,14 +303,24 @@ const evaluateBinding = (
         const proof = context.proofs.get(id);
         return proof === undefined
           ? ({ ok: false, error: "missing-evidence" } as const)
-          : qualifyReconstructionProof(proof, fixture.authority, {
-              kind: "fixture",
-              obligationId: candidate.obligation_id,
-              obligationVersion: candidate.obligation_version,
-              ownerSha256: binding.owner.owner_sha256,
-              fixtureId: fixture.fixture_id,
-              caseKind: fixture.case_kind,
-            });
+          : qualifyReconstructionProof(
+              proof,
+              fixture.authority,
+              {
+                kind: "fixture",
+                obligationId: candidate.obligation_id,
+                obligationVersion: candidate.obligation_version,
+                ownerSha256: binding.owner.owner_sha256,
+                fixtureId: fixture.fixture_id,
+                caseKind: fixture.case_kind,
+              },
+              {
+                evidence: context.evidence,
+                ...(candidate.run_requirements === undefined
+                  ? {}
+                  : { runRequirements: candidate.run_requirements }),
+              },
+            );
       }),
     }));
     if (
@@ -381,6 +394,7 @@ const evaluateVerifier = (
       `Verifier authority does not satisfy ${candidate.required_verifier_authority}.`,
     );
   const proof = context.proofs.get(verifier.result_evidence_id);
+  let governedProofIsApplicable = false;
   if (proof !== undefined) {
     const qualification = qualifyReconstructionProof(
       proof,
@@ -393,7 +407,16 @@ const evaluateVerifier = (
         verifierId: verifier.verifier_id,
         claimId: verifier.claim_id,
       },
+      {
+        evidence: context.evidence,
+        ...(candidate.run_requirements === undefined
+          ? {}
+          : { runRequirements: candidate.run_requirements }),
+      },
     );
+    governedProofIsApplicable =
+      qualification.ok ||
+      (qualification.ok === false && qualification.error === "failed-proof");
     if (!qualification.ok)
       addDiagnostic(
         diagnostics,
@@ -405,7 +428,14 @@ const evaluateVerifier = (
         `Verifier proof qualification: ${qualification.error}.`,
       );
   }
-  if (verifier.status !== "pass")
+  if (
+    verifier.status !== "pass" &&
+    !(
+      verifier.status === "fail" &&
+      candidate.run_requirements !== undefined &&
+      !governedProofIsApplicable
+    )
+  )
     addDiagnostic(
       diagnostics,
       verifier.status === "fail" ? "verifier-failed" : "verifier-unavailable",

@@ -114,6 +114,13 @@ import {
   endpointComparisonViewRequestSchema,
 } from "./endpointComparisonView.js";
 import {
+  investigationGraphScenarioSchema,
+  investigationGraphGovernanceItemSchema,
+  investigationGraphSourceCoverageSchema,
+  investigationGraphViewItemSchema,
+  investigationGraphViewRequestSchema,
+} from "./investigationGraphView.js";
+import {
   featureTraceSummarySchema,
   featureTraceViewCollections,
   featureTraceViewContextSchema,
@@ -1313,6 +1320,19 @@ const machoPageViewResultSchema = z
 
 /** Projected facts for one selected view of retained analysis Evidence. */
 export const analysisViewResultSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    ...viewResultBase,
+    kind: z.literal("investigation-graph"),
+    parent_operation: z.literal("update_investigation_graph"),
+    artifact: z.null(),
+    view: investigationGraphViewRequestSchema,
+    scope_id: z.string(),
+    target_revision_id: z.string(),
+    scenario: investigationGraphScenarioSchema,
+    source_coverage: investigationGraphSourceCoverageSchema,
+    items: z.array(investigationGraphViewItemSchema),
+    governance: z.array(investigationGraphGovernanceItemSchema).exactOptional(),
+  }),
   z.strictObject({
     ...viewResultBase,
     ...nativeViewSourceContext,

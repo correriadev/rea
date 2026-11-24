@@ -609,7 +609,10 @@ export const createServer = (
           webModuleTrace,
           webSourceLocation,
           javascriptRecovery: javascriptRecoveryService,
-          applicationWorkflows: { resources: artifactResources },
+          applicationWorkflows: {
+            resources: artifactResources,
+            investigation: session,
+          },
           guidedWorkflows: promptsForToolFamilies(
             server.advertisedToolFamilies,
           ),

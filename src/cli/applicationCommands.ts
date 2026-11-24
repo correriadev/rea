@@ -1,5 +1,6 @@
 import { registerPlaywrightTraceCommand } from "./playwrightTraceCommand.js";
 import { registerApiContractCommand } from "./apiContractCommand.js";
+import { registerInvestigationSnapshotCommand } from "./investigationSnapshotCommand.js";
 import { registerNtfsJournalCommand } from "./ntfsJournalCommand.js";
 import type { CliInstance } from "./types.js";
 
@@ -87,6 +88,26 @@ export const registerApplicationCommands = (
       return result.ok ? { ok: true, value: result.value.evidence } : result;
     },
   });
+  registerInvestigationSnapshotCommand(
+    cli,
+    logger,
+    contractNamed(APPLICATION_TOOL_CONTRACTS, "update_investigation_graph"),
+    async (input, reader, signal) => {
+      const { updateInvestigationGraph } =
+        await import("../application/investigation/InvestigationGraphService.js");
+      return updateInvestigationGraph(input, reader, signal);
+    },
+  );
+  registerInvestigationSnapshotCommand(
+    cli,
+    logger,
+    contractNamed(APPLICATION_TOOL_CONTRACTS, "record_behavior_governance"),
+    async (input, reader, signal) => {
+      const { recordBehaviorGovernance } =
+        await import("../application/investigation/BehaviorGovernanceService.js");
+      return recordBehaviorGovernance(input, reader, signal);
+    },
+  );
   registerSourceToBundleCommand(cli, logger);
   registerStaticObservedEndpointsCommand(cli, logger);
   registerApiContractCommand(cli, logger);
