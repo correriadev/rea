@@ -7,7 +7,7 @@ import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { ArtifactResourceScope } from "../resources/index.js";
 import type { InvestigationWorkflowExecution } from "../application/investigation/InvestigationWorkflows.js";
 import type { InvestigationSnapshotReader } from "../application/investigation/InvestigationSnapshotBundle.js";
-import { registerContractDocumentCommand } from "./contractCommand.js";
+import { registerContractDocumentCommand } from "./contractDocumentCommand.js";
 import { evidenceBundleOption } from "./evidenceInputCommand.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import { parseAnalysisInput } from "../application/AnalysisInput.js";

@@ -1,10 +1,13 @@
+import { BinaryReader } from "./binaryContainer.js";
 import { readElfAttributeUleb } from "./elfAttributeUleb.js";
-import type { RiscvIsaDeclaration } from "./binaryTargetTypes.js";
-import {
-  readElfTableDeclarations,
-  type ElfDeclarationRead,
-} from "./elfDeclaredRanges.js";
-import { readElfSectionHeader } from "./elfSectionHeader.js";
+import type {
+  ElfSectionOverlap,
+  RiscvIsaDeclaration,
+} from "./binaryTargetTypes.js";
+import type { ElfDeclarationRead } from "./elfDeclaredRanges.js";
+import type { ElfSectionHeader } from "./elfSectionHeader.js";
+import { elfSectionOverlapCollector } from "./elfSectionOverlap.js";
+import { visitElfSectionHeaders } from "./elfSectionTable.js";
 import { err, ok, type Result } from "./result.js";
 
 /** `EF_RISCV_FLOAT_ABI` declarations in `e_flags`, named as the psABI names them. */
@@ -64,20 +67,17 @@ export const parseRiscvAttributes = (
 ): Result<string | null, string> => {
   if (bytes.length === 0 || bytes[0] !== FORMAT_VERSION)
     return err("unsupported RISC-V attribute section format version");
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const readU32 = (offset: number): number =>
-    view.getUint32(offset, littleEndian);
+  const section = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const reader = new BinaryReader(section, littleEndian, "RISC-V attributes");
   const readString = (
     offset: number,
     end: number,
   ): { readonly value: string; readonly next: number } | undefined => {
-    const stop = bytes.indexOf(0, offset);
-    return stop < 0 || stop >= end
+    const field = section.subarray(offset, end);
+    const stop = field.indexOf(0);
+    return stop < 0
       ? undefined
-      : {
-          value: Buffer.from(bytes.subarray(offset, stop)).toString("latin1"),
-          next: stop + 1,
-        };
+      : { value: field.toString("latin1", 0, stop), next: offset + stop + 1 };
   };
 
   let arch: string | null = null;
@@ -86,7 +86,7 @@ export const parseRiscvAttributes = (
   while (position < bytes.length) {
     if (bytes.length - position < 4)
       return err("truncated RISC-V attribute subsection length");
-    const length = readU32(position);
+    const length = reader.u32(position);
     if (length < 4 || length > bytes.length - position)
       return err("RISC-V attribute subsection length does not fit the section");
     const end = position + length;
@@ -114,7 +114,7 @@ export const parseRiscvAttributes = (
         );
       if (end - scope.next < 4)
         return err("truncated RISC-V attribute scope length");
-      const scopeLength = readU32(scope.next);
+      const scopeLength = reader.u32(scope.next);
       if (
         scopeLength < scope.next + 4 - scopeStart ||
         scopeLength > end - scopeStart
@@ -197,69 +197,102 @@ export const riscvIsaDeclaration = (arch: string): RiscvIsaDeclaration => {
 };
 
 /**
- * Find and interpret the image's `SHT_RISCV_ATTRIBUTES` section. Every section
- * header is examined, so an absent declaration is observed, not assumed; two
- * attribute sections leave the declaration unavailable. The caller satisfies
- * each read from its own descriptor.
+ * Find the image's `SHT_RISCV_ATTRIBUTES` section during a section-table pass,
+ * then interpret it. Every section header is examined, so an absent declaration
+ * is observed, not assumed; two attribute sections leave it unavailable.
  */
-export function* readRiscvIsaDeclaration(
-  prefix: Buffer,
-  fileSize: number,
-): Generator<ElfDeclarationRead, RiscvIsaDeclaration, Buffer> {
-  const unavailable = (reason: string): RiscvIsaDeclaration => ({
-    status: "unavailable",
-    reason,
-  });
-  const declarations = yield* readElfTableDeclarations(prefix, fileSize);
-  if (!declarations.ok) return unavailable(declarations.error);
-  const { header, sections } = declarations.value;
-  const little = header.byteOrder === "little";
+const riscvIsaCollector = () => {
   let attributes:
     | { readonly offset: bigint; readonly size: bigint }
     | undefined;
-  const perRead = Math.max(1, Math.floor((64 * 1024) / sections.width));
-  for (let index = 0; index < sections.count; index += perRead) {
-    const count = Math.min(perRead, sections.count - index);
-    const size = count * sections.width;
-    const bytes = yield {
-      offset: Number(sections.offset) + index * sections.width,
-      size,
-    };
-    if (bytes.length !== size)
-      return unavailable("truncated ELF section header table");
-    for (let item = 0; item < count; item += 1) {
-      const at = item * sections.width;
-      const parsed = readElfSectionHeader(
-        bytes.subarray(at, at + sections.width),
-        header.elfClass,
-        little,
-      );
-      if (!parsed.ok) return unavailable(parsed.error.message);
-      if (parsed.value.type !== SHT_RISCV_ATTRIBUTES) continue;
-      if (attributes !== undefined)
+  let duplicated = false;
+  return {
+    visit(section: ElfSectionHeader): void {
+      if (section.type !== SHT_RISCV_ATTRIBUTES) return;
+      if (attributes !== undefined) duplicated = true;
+      else attributes = { offset: section.offset, size: section.size };
+    },
+    *finish(
+      little: boolean,
+      fileSize: number,
+    ): Generator<ElfDeclarationRead, RiscvIsaDeclaration, Buffer> {
+      if (duplicated)
         return unavailable(
           "the image has more than one RISC-V attribute section",
         );
-      attributes = { offset: parsed.value.offset, size: parsed.value.size };
-    }
-  }
-  if (attributes === undefined) return { status: "absent" };
-  if (
-    attributes.size === 0n ||
-    attributes.size > BigInt(RISCV_ATTRIBUTES_MAX_BYTES)
-  )
-    return unavailable(
-      `RISC-V attribute section size ${String(attributes.size)} is outside REA's inspected bound of ${RISCV_ATTRIBUTES_MAX_BYTES} bytes`,
-    );
-  if (attributes.offset > BigInt(fileSize) - attributes.size)
-    return unavailable("RISC-V attribute section lies outside the file");
-  const size = Number(attributes.size);
-  const bytes = yield { offset: Number(attributes.offset), size };
-  if (bytes.length !== size)
-    return unavailable("truncated RISC-V attribute section");
-  const arch = parseRiscvAttributes(bytes, little);
-  if (!arch.ok) return unavailable(arch.error);
-  return arch.value === null
-    ? { status: "absent" }
-    : riscvIsaDeclaration(arch.value);
+      if (attributes === undefined) return { status: "absent" };
+      if (
+        attributes.size === 0n ||
+        attributes.size > BigInt(RISCV_ATTRIBUTES_MAX_BYTES)
+      )
+        return unavailable(
+          `RISC-V attribute section size ${String(attributes.size)} is outside REA's inspected bound of ${RISCV_ATTRIBUTES_MAX_BYTES} bytes`,
+        );
+      if (attributes.offset > BigInt(fileSize) - attributes.size)
+        return unavailable("RISC-V attribute section lies outside the file");
+      const size = Number(attributes.size);
+      const bytes = yield { offset: Number(attributes.offset), size };
+      if (bytes.length !== size)
+        return unavailable("truncated RISC-V attribute section");
+      const arch = parseRiscvAttributes(bytes, little);
+      if (!arch.ok) return unavailable(arch.error);
+      return arch.value === null
+        ? { status: "absent" }
+        : riscvIsaDeclaration(arch.value);
+    },
+  };
+};
+
+const unavailable = (reason: string): RiscvIsaDeclaration => ({
+  status: "unavailable",
+  reason,
+});
+
+/**
+ * The RISC-V declarations the section table makes, from one pass over it: the
+ * ISA, and when requested (`ET_EXEC` and `ET_DYN`) the section overlap. The
+ * caller satisfies each read from its own descriptor.
+ */
+export function* readRiscvElfDeclarations(
+  prefix: Buffer,
+  fileSize: number,
+  options: { readonly sectionOverlap: boolean },
+): Generator<
+  ElfDeclarationRead,
+  {
+    readonly isa: RiscvIsaDeclaration;
+    readonly sectionOverlap?: ElfSectionOverlap;
+  },
+  Buffer
+> {
+  const isa = riscvIsaCollector();
+  const overlap = options.sectionOverlap
+    ? elfSectionOverlapCollector()
+    : undefined;
+  const visited = yield* visitElfSectionHeaders(
+    prefix,
+    fileSize,
+    (section, index, tables) => {
+      isa.visit(section);
+      overlap?.visit(section, index, tables);
+      return undefined;
+    },
+  );
+  if (!visited.ok)
+    return {
+      isa: unavailable(visited.error),
+      ...(overlap === undefined
+        ? {}
+        : {
+            sectionOverlap: {
+              status: "unavailable",
+              reason: visited.error,
+            },
+          }),
+    };
+  const little = visited.value.header.byteOrder === "little";
+  const declared = yield* isa.finish(little, fileSize);
+  return overlap === undefined
+    ? { isa: declared }
+    : { isa: declared, sectionOverlap: yield* overlap.finish(fileSize) };
 }
